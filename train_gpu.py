@@ -287,7 +287,7 @@ def train(ps_device):
             feed_dict[m] = m_np
 
       fetched = sess.run(fetches, feed_dict=feed_dict)
-
+      import ipdb;ipdb.set_trace()
       loss_np, tower_mems_np, curr_step = fetched[:3]
       total_loss += loss_np
 

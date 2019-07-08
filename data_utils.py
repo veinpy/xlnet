@@ -564,14 +564,15 @@ def parse_files_to_dataset(parser, file_names, split, num_batch, num_hosts,
   # Note: we cannot perform sample-level shuffle here because this will violate
   # the consecutive requirement of data stream.
   dataset = tf.data.TFRecordDataset(dataset)
-
   # (zihang): since we are doing online preprocessing, the parsed result of
   # the same input at each time will be different. Thus, cache processed data
   # is not helpful. It will use a lot of memory and lead to contrainer OOM.
   # So, change to cache non-parsed raw data instead.
+
+  # dataset = dataset.shuffle(buffer_size=num_core_per_host * bsz_per_core*2).repeat().map(parser)#.cache()
   dataset = dataset.cache().map(parser).repeat()
   dataset = dataset.batch(bsz_per_core, drop_remainder=True)
-  dataset = dataset.prefetch(num_core_per_host * bsz_per_core)
+  dataset = dataset.prefetch(1)# num_core_per_host * bsz_per_core)
 
   return dataset
 
@@ -707,8 +708,8 @@ def get_dataset(params, num_hosts, num_core_per_host, split, file_names,
       indices = tf.boolean_mask(indices, bool_target_mask)
 
       ##### extra padding due to CLS/SEP introduced after prepro
-      # actual_num_predict = tf.shape(indices)[0]
-      actual_num_predict = indices.shape[0]
+      actual_num_predict = tf.shape(indices)[0]
+      # actual_num_predict = indices.shape[0]
       pad_len = num_predict - actual_num_predict
 
       ##### target_mapping
