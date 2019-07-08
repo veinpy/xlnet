@@ -134,7 +134,8 @@ def get_classification_loss(
     FLAGS, features, n_class, is_training):
   """Loss for downstream classification tasks."""
 
-  bsz_per_core = tf.shape(features["input_ids"])[0]
+  # bsz_per_core = tf.shape(features["input_ids"])[0]
+  bsz_per_core = features["input_ids"].shape[0]
 
   inp = tf.transpose(features["input_ids"], [1, 0])
   seg_id = tf.transpose(features["segment_ids"], [1, 0])
@@ -177,7 +178,8 @@ def get_regression_loss(
     FLAGS, features, is_training):
   """Loss for downstream regression tasks."""
 
-  bsz_per_core = tf.shape(features["input_ids"])[0]
+  # bsz_per_core = tf.shape(features["input_ids"])[0]
+  bsz_per_core = features["input_ids"].shape[0]
 
   inp = tf.transpose(features["input_ids"], [1, 0])
   seg_id = tf.transpose(features["segment_ids"], [1, 0])
@@ -217,7 +219,8 @@ def get_qa_outputs(FLAGS, features, is_training):
   inp_mask = tf.transpose(features["input_mask"], [1, 0])
   cls_index = tf.reshape(features["cls_index"], [-1])
 
-  seq_len = tf.shape(inp)[0]
+  # seq_len = tf.shape(inp)[0]
+  seq_len = inp.shape[0]
 
   xlnet_config = xlnet.XLNetConfig(json_path=FLAGS.model_config_path)
   run_config = xlnet.create_run_config(is_training, True, FLAGS)
@@ -356,7 +359,8 @@ def get_qa_outputs(FLAGS, features, is_training):
 def get_race_loss(FLAGS, features, is_training):
   """Loss for downstream multi-choice QA tasks such as RACE."""
 
-  bsz_per_core = tf.shape(features["input_ids"])[0]
+  # bsz_per_core = tf.shape(features["input_ids"])[0]
+  bsz_per_core = features["input_ids"].shape[0]
 
   def _transform_features(feature):
     out = tf.reshape(feature, [bsz_per_core, 4, -1])

@@ -1054,7 +1054,8 @@ def get_model_fn():
       return output_spec
 
     ### Compute loss
-    seq_length = tf.shape(features["input_ids"])[1]
+    # seq_length = tf.shape(features["input_ids"])[1]
+    seq_length = features["input_ids"].shape[1]
     def compute_loss(log_probs, positions):
       one_hot_positions = tf.one_hot(
           positions, depth=seq_length, dtype=tf.float32)

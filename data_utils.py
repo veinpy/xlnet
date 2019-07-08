@@ -707,7 +707,8 @@ def get_dataset(params, num_hosts, num_core_per_host, split, file_names,
       indices = tf.boolean_mask(indices, bool_target_mask)
 
       ##### extra padding due to CLS/SEP introduced after prepro
-      actual_num_predict = tf.shape(indices)[0]
+      # actual_num_predict = tf.shape(indices)[0]
+      actual_num_predict = indices.shape[0]
       pad_len = num_predict - actual_num_predict
 
       ##### target_mapping
@@ -778,7 +779,7 @@ def get_input_fn(
 
   # Merge all record infos into a single one
   record_glob_base = format_filename(
-      prefix="record_info-{}-*".format(split),
+      prefix="record_info-{}-*-*".format(split),
       bsz_per_host=bsz_per_host,
       seq_len=seq_len,
       bi_data=bi_data,

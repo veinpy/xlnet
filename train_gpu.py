@@ -182,7 +182,6 @@ def initialize_mems_np(bsz_per_core):
 
 def train(ps_device):
   ##### Get input function and model function
-
   train_input_fn, record_info_dict = data_utils.get_input_fn(
       tfrecord_dir=FLAGS.record_info_dir,
       split="train",

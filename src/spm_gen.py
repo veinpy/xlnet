@@ -10,11 +10,13 @@ special symbols:
 
 spm.SentencePieceTrainer.Train("""--input=spm_test.txt \
         --model_prefix=m_test_v2 \
-        --vocab_size=100000 \
+        --vocab_size=10000 \
+        --hard_vocab_limit=false \
         --control_symbols=<cls>,<sep>,<pad>,<mask>,<eod> \
         --model_type=unigram \
-        --use_all_vocab true
-        --user_defined_symbols=<eop>,.,(,),\",-,–,£,€""")
+        --use_all_vocab=true \
+        --character_coverage=0.99995 \
+        --user_defined_symbols=<eop>,.,(,),\",-,–,£,€,，,。,！,？,《,》,；,：""")
 
 
 sp = spm.SentencePieceProcessor()
@@ -25,5 +27,5 @@ sp.encode_as_ids("""我不能确定对方是不是喜欢我，我却想分分秒
 
 """)
 
-
+sp.IdToPiece(0)
 

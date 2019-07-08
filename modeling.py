@@ -135,7 +135,8 @@ def rel_attn_core(q_head, k_head_h, v_head_h, k_head_r, seg_embed, seg_mat,
 
   # position based attention score
   bd = tf.einsum('ibnd,jbnd->ijbn', q_head + r_r_bias, k_head_r)
-  bd = rel_shift(bd, klen=tf.shape(ac)[1])
+  # bd = rel_shift(bd, klen=tf.shape(ac)[1])
+  bd = rel_shift(bd, klen=ac.shape[1])
 
   # segment based attention score
   if seg_mat is None:
@@ -162,7 +163,7 @@ def rel_attn_core(q_head, k_head_h, v_head_h, k_head_r, seg_embed, seg_mat,
 
 def rel_shift(x, klen=-1):
   """perform relative shift to form the relative attention score."""
-  x_size = tf.shape(x)
+  x_size = x.shape
 
   x = tf.reshape(x, [x_size[1], x_size[0], x_size[2], x_size[3]])
   x = tf.slice(x, [1, 0, 0, 0], [-1, -1, -1, -1])
@@ -466,10 +467,12 @@ def transformer_xl(inp_k, n_token, n_layer, d_model, n_head,
                                  dtype=tf_float, initializer=initializer)
       r_r_bias = tf.get_variable('r_r_bias', [n_head, d_head],
                                  dtype=tf_float, initializer=initializer)
-
-    bsz = tf.shape(inp_k)[1]
-    qlen = tf.shape(inp_k)[0]
-    mlen = tf.shape(mems[0])[0] if mems is not None else 0
+    # bsz = tf.shape(inp_k)[1]
+    bsz = inp_k.shape[1]
+    # qlen = tf.shape(inp_k)[0]
+    qlen = inp_k.shape[0]
+    # mlen = tf.shape(mems[0])[0] if mems is not None else 0
+    mlen = mems[0].shape[0] if mems is not None else 0
     klen = mlen + qlen
 
     ##### Attention mask
@@ -494,8 +497,10 @@ def transformer_xl(inp_k, n_token, n_layer, d_model, n_head,
 
     if data_mask is not None:
       # all mems can be attended to
-      mems_mask = tf.zeros([tf.shape(data_mask)[0], mlen, bsz],
-                           dtype=tf_float)
+      # mems_mask = tf.zeros([tf.shape(data_mask)[0], mlen, bsz],
+      #                      dtype=tf_float)
+      mems_mask = tf.zeros([data_mask.shape[0], mlen, bsz],
+                                dtype=tf_float)
       data_mask = tf.concat([mems_mask, data_mask], 1)
       if attn_mask is None:
         attn_mask = data_mask[:, :, :, None]
@@ -528,7 +533,8 @@ def transformer_xl(inp_k, n_token, n_layer, d_model, n_head,
       with tf.variable_scope('mask_emb'):
         mask_emb = tf.get_variable('mask_emb', [1, 1, d_model], dtype=tf_float)
         if target_mapping is not None:
-          word_emb_q = tf.tile(mask_emb, [tf.shape(target_mapping)[0], bsz, 1])
+          # word_emb_q = tf.tile(mask_emb, [tf.shape(target_mapping)[0], bsz, 1])
+          word_emb_q = tf.tile(mask_emb, [target_mapping.shape[0], bsz, 1])
         else:
           inp_q_ext = inp_q[:, :, None]
           word_emb_q = inp_q_ext * mask_emb + (1 - inp_q_ext) * word_emb_k
@@ -704,7 +710,8 @@ def summarize_sequence(summary_type, hidden, d_model, n_head, d_head, dropout,
     elif summary_type == 'mean':
       summary = tf.reduce_mean(hidden, axis=0)
     elif summary_type == 'attn':
-      bsz = tf.shape(hidden)[1]
+      # bsz = tf.shape(hidden)[1]
+      bsz = hidden.shape[1]
 
       summary_bias = tf.get_variable('summary_bias', [d_model],
                                      dtype=hidden.dtype,

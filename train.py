@@ -13,7 +13,8 @@ import numpy as np
 
 import tensorflow as tf
 import model_utils
-import tpu_estimator
+# import tpu_estimator
+from tensorflow import estimator as Testimator
 import function_builder
 import data_utils
 
@@ -274,15 +275,20 @@ def main(unused_argv):
   run_config = model_utils.configure_tpu(FLAGS)
 
   # TPU Estimator
-  estimator = tpu_estimator.TPUEstimator(
-      model_fn=model_fn,
-      train_cache_fn=train_cache_fn,
-      use_tpu=FLAGS.use_tpu,
+  # estimator = tpu_estimator.TPUEstimator(
+  #     model_fn=model_fn,
+  #     train_cache_fn=train_cache_fn,
+  #     use_tpu=FLAGS.use_tpu,
+  #     config=run_config,
+  #     params={"track_mean": FLAGS.track_mean},
+  #     train_batch_size=FLAGS.train_batch_size,
+  #     )
+
+  estimator = Testimator.Estimator(model_fn=model_fn,
       config=run_config,
       params={"track_mean": FLAGS.track_mean},
-      train_batch_size=FLAGS.train_batch_size,
-      eval_on_tpu=FLAGS.use_tpu)
-
+      model_dir="./save_model/"
+      )
   #### Training
   estimator.train(input_fn=train_input_fn, max_steps=FLAGS.train_steps)
 
