@@ -133,22 +133,24 @@ FLAGS = flags.FLAGS
 
 def get_model_fn():
   def model_fn(features, labels, mems, is_training):
-    #### Get loss from inputs
-    total_loss, new_mems, monitor_dict = function_builder.get_loss(
-        FLAGS, features, labels, mems, is_training)
+    if is_training:
+        #### Get loss from inputs
+        total_loss, new_mems, monitor_dict = function_builder.get_loss(
+            FLAGS, features, labels, mems, is_training)
 
-    #### Check model parameters
-    num_params = sum([np.prod(v.shape) for v in tf.trainable_variables()])
-    tf.logging.info('#params: {}'.format(num_params))
+        #### Check model parameters
+        num_params = sum([np.prod(v.shape) for v in tf.trainable_variables()])
+        tf.logging.info('#params: {}'.format(num_params))
 
-    # GPU
-    assert is_training
-    all_vars = tf.trainable_variables()
-    grads = tf.gradients(total_loss, all_vars)
-    grads_and_vars = list(zip(grads, all_vars))
+        # GPU
+        assert is_training
+        all_vars = tf.trainable_variables()
+        grads = tf.gradients(total_loss, all_vars)
+        grads_and_vars = list(zip(grads, all_vars))
 
-    return total_loss, new_mems, grads_and_vars
-
+        return total_loss, new_mems, grads_and_vars
+    else:
+        raise NotImplementedError()
   return model_fn
 
 
@@ -287,7 +289,6 @@ def train(ps_device):
             feed_dict[m] = m_np
 
       fetched = sess.run(fetches, feed_dict=feed_dict)
-      import ipdb;ipdb.set_trace()
       loss_np, tower_mems_np, curr_step = fetched[:3]
       total_loss += loss_np
 

@@ -241,7 +241,7 @@ def create_data(_):
 
 def batchify(data, bsz_per_host, sent_ids=None):
   num_step = len(data) // bsz_per_host
-  data = data[:bsz_per_host * num_step]
+  data = data[:bsz_per_host * num_step]  # split corpus into batch_size*(length//batch_size)
   data = data.reshape(bsz_per_host, num_step)
   if sent_ids is not None:
     sent_ids = sent_ids[:bsz_per_host * num_step]
@@ -330,7 +330,12 @@ def _is_start_piece(piece):
 
 def _sample_mask(sp, seg, reverse=False, max_gram=5, goal_num_predict=None):
   """Sample `goal_num_predict` tokens for partial prediction.
-  About `mask_beta` tokens are chosen in a context of `mask_alpha` tokens."""
+  About `mask_beta` tokens are chosen in a context of `mask_alpha` tokens.
+
+  method:
+        random find a start point to mask , mask continuous sequence of n-gram.
+        and then random mask until the goal_num_predict satisfied
+  """
 
   seg_len = len(seg)
   mask = np.array([False] * seg_len, dtype=np.bool)
@@ -357,7 +362,7 @@ def _sample_mask(sp, seg, reverse=False, max_gram=5, goal_num_predict=None):
 
     # Find the start position of a complete token
     beg = cur_len + l_ctx
-    while beg < seg_len and not _is_start_piece(sp.IdToPiece(seg[beg].item())):
+    while beg < seg_len and not _is_start_piece(sp.IdToPiece(seg[beg].item())):  # find the sub-sentence start point
       beg += 1
     if beg >= seg_len:
       break
@@ -410,7 +415,7 @@ def create_tfrecords(save_dir, basename, data, bsz_per_host, seq_len,
     bwd_sent_ids = fwd_sent_ids[:, :, :, ::-1]
 
     data = np.concatenate(
-        [fwd_data, bwd_data], 1).reshape(bsz_per_host, -1)
+        [fwd_data, bwd_data], 1).reshape(bsz_per_host, -1)  # (num_core,2,batch_size//2, -1) -> (batch_size,-1)
     sent_ids = np.concatenate(
         [fwd_sent_ids, bwd_sent_ids], 1).reshape(bsz_per_host, -1)
   else:
@@ -440,7 +445,7 @@ def create_tfrecords(save_dir, basename, data, bsz_per_host, seq_len,
   # [sep] x 2 + [cls]
   assert reuse_len < seq_len - 3
 
-  data_len = data.shape[1]
+  data_len = data.shape[1]  # (batch_size, length)
   sep_array = np.array([SEP_ID], dtype=np.int64)
   cls_array = np.array([CLS_ID], dtype=np.int64)
 
@@ -487,6 +492,7 @@ def create_tfrecords(save_dir, basename, data, bsz_per_host, seq_len,
                                  sep_array, cls_array])
       seg_id = ([0] * (reuse_len + a_data.shape[0]) + [0] +
                 [1] * b_data.shape[0] + [1] + [2])
+
       assert cat_data.shape[0] == seq_len
       assert mask_0.shape[0] == seq_len // 2
       assert mask_1.shape[0] == seq_len // 2
@@ -744,7 +750,6 @@ def get_dataset(params, num_hosts, num_core_per_host, split, file_names,
 
     for k, v in example.items():
       tf.logging.info("%s: %s", k, v)
-
     return example
 
   # Get dataset

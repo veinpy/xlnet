@@ -90,6 +90,8 @@ def two_stream_loss(FLAGS, features, labels, mems, is_training):
       inp_q=inp_q)
 
   output = xlnet_model.get_sequence_output()
+  if not is_training:
+      return output
   new_mems = {mem_name: xlnet_model.get_new_memory()}
   lookup_table = xlnet_model.get_embedding_table()
 

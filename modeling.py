@@ -654,10 +654,11 @@ def transformer_xl(inp_k, n_token, n_layer, d_model, n_head,
             is_training=is_training,
             reuse=reuse)
 
-    if inp_q is not None:
-      output = tf.layers.dropout(output_g, dropout, training=is_training)
-    else:
-      output = tf.layers.dropout(output_h, dropout, training=is_training)
+    with tf.name_scope("output"):
+        if inp_q is not None:
+          output = tf.layers.dropout(output_g, dropout, training=is_training)
+        else:
+          output = tf.layers.dropout(output_h, dropout, training=is_training)
 
     return output, new_mems, lookup_table
 
