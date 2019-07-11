@@ -1,3 +1,4 @@
+"""Pretraining on GPUs."""
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
@@ -17,7 +18,9 @@ import data_utils
 import model_utils
 from gpu_utils import assign_to_gpu, average_grads_and_vars
 import function_builder
-
+import sentencepiece as spm
+sp = spm.SentencePieceProcessor()
+sp.Load("xlData/sellpoint/m_corpus_v2.model")
 
 # GPU config
 flags.DEFINE_integer("num_hosts", default=1,
@@ -55,6 +58,12 @@ flags.DEFINE_float("weight_decay", default=0.0,
       help="weight decay")
 
 # Training config
+flags.DEFINE_bool("do_train", default=False,
+      help="whether train ")
+flags.DEFINE_bool("do_eval", default=False,
+      help="whether eval ")
+flags.DEFINE_bool("do_predict", default=False,
+      help="whether predict ")
 flags.DEFINE_integer("train_batch_size", default=16,
       help="Size of train batch.")
 flags.DEFINE_integer("train_steps", default=100000,
@@ -129,6 +138,56 @@ flags.DEFINE_float("init_range", default=0.1,
 
 FLAGS = flags.FLAGS
 
+
+def visualize_infer_result():
+    """
+    visualize one batch of infer result
+    :return:
+    """
+
+
+
+def get_model_fn():
+  def model_fn(features, labels, mems, mode):
+    is_training=(mode==tf.estimator.ModeKeys.TRAIN)
+
+    if mode==tf.estimator.ModeKeys.TRAIN:
+        #### Get loss from inputs
+        total_loss, new_mems, monitor_dict = function_builder.get_loss(
+            FLAGS, features, labels, mems, is_training)
+
+        #### Check model parameters
+        num_params = sum([np.prod(v.shape) for v in tf.trainable_variables()])
+        tf.logging.info('#params: {}'.format(num_params))
+
+        # GPU
+        assert is_training
+        all_vars = tf.trainable_variables()
+        grads = tf.gradients(total_loss, all_vars)
+        grads_and_vars = list(zip(grads, all_vars))
+
+        return total_loss, new_mems, grads_and_vars
+    elif mode==tf.estimator.ModeKeys.EVAL:
+        raise NotImplementedError()
+    elif mode==tf.estimator.ModeKeys.PREDICT:
+        outputs = function_builder.get_loss(
+            FLAGS, features, labels, mems, is_training,mode=mode)
+        return outputs
+  return model_fn
+
+
+def single_core_graph(mode, features, mems):
+  model_fn = get_model_fn()
+
+  model_ret = model_fn(
+      features=features,
+      labels=None,
+      mems=mems,
+      mode=mode)
+
+  return model_ret
+
+
 def create_mems_tf(bsz_per_core):
   mems = [tf.placeholder(dtype=tf.float32,
                          shape=[FLAGS.mem_len, bsz_per_core, FLAGS.d_model])
@@ -137,182 +196,143 @@ def create_mems_tf(bsz_per_core):
   return mems
 
 
-def _convert_example(example, use_bfloat16):
-  """Cast int64 into int32 and float32 to bfloat16 if use_bfloat16."""
-  for key in list(example.keys()):
-    val = example[key]
-    if tf.keras.backend.is_sparse(val):
-      val = tf.sparse.to_dense(val)
-    if val.dtype == tf.int64:
-      val = tf.cast(val, tf.int32)
-    if use_bfloat16 and val.dtype == tf.float32:
-      val = tf.cast(val, tf.bfloat16)
+def initialize_mems_np(bsz_per_core):
+  mems_np = [np.zeros(shape=[FLAGS.mem_len, bsz_per_core, FLAGS.d_model],
+                      dtype=np.float32)
+             for layer in range(FLAGS.n_layer)]
 
-    example[key] = val
-
-def input_fn_builder(tfrecord_dir, is_triaining):
+  return mems_np
 
 
+def predict(ps_device):
+  ##### Get input function and model function
+  train_input_fn, record_info_dict = data_utils.get_input_fn(
+      tfrecord_dir=FLAGS.record_info_dir,
+      split="train",
+      bsz_per_host=FLAGS.train_batch_size,
+      seq_len=FLAGS.seq_len,
+      reuse_len=FLAGS.reuse_len,
+      bi_data=FLAGS.bi_data,
+      num_hosts=1,
+      num_core_per_host=1, # set to one no matter how many GPUs
+      perm_size=FLAGS.perm_size,
+      mask_alpha=FLAGS.mask_alpha,
+      mask_beta=FLAGS.mask_beta,
+      uncased=FLAGS.uncased,
+      num_passes=FLAGS.num_passes,
+      use_bfloat16=FLAGS.use_bfloat16,
+      num_predict=FLAGS.num_predict)
 
-    def parser(record):
-        """function used to parse tfrecord."""
+  # for key, info in record_info_dict.items():
+  tf.logging.info("num of batches {}".format(record_info_dict["num_batch"]))
 
-        record_spec = {
-            "input": tf.FixedLenFeature([seq_len], tf.int64),
-            "target": tf.FixedLenFeature([seq_len], tf.int64),
-            "seg_id": tf.FixedLenFeature([seq_len], tf.int64),
-            "label": tf.FixedLenFeature([1], tf.int64),
-            "is_masked": tf.FixedLenFeature([seq_len], tf.int64),
-        }
+  ##### Create input tensors / placeholders
+  bsz_per_core = FLAGS.train_batch_size // FLAGS.num_core_per_host
 
-        # retrieve serialized example
-        example = tf.parse_single_example(
-            serialized=record,
-            features=record_spec)
+  params = {
+      "batch_size": FLAGS.train_batch_size # the whole batch
+  }
+  train_set = train_input_fn(params)
 
-        inputs = example.pop("input")
-        target = example.pop("target")
-        is_masked = tf.cast(example.pop("is_masked"), tf.bool)
+  example = train_set.make_one_shot_iterator().get_next()
+  examples = [example]
 
-        non_reuse_len = seq_len - reuse_len
-        assert perm_size <= reuse_len and perm_size <= non_reuse_len
+  ##### Create computational graph
+  tower_mems, tower_losses, tower_new_mems, tower_grads_and_vars = [], [], [], []
 
-        perm_mask_0, target_0, target_mask_0, input_k_0, input_q_0 = _local_perm(
-            inputs[:reuse_len],
-            target[:reuse_len],
-            is_masked[:reuse_len],
-            perm_size,
-            reuse_len)
+  mems_i = {}
+  if FLAGS.mem_len:
+    mems_i["mems"] = create_mems_tf(bsz_per_core)
 
-        perm_mask_1, target_1, target_mask_1, input_k_1, input_q_1 = _local_perm(
-            inputs[reuse_len:],
-            target[reuse_len:],
-            is_masked[reuse_len:],
-            perm_size,
-            non_reuse_len)
-
-        perm_mask_0 = tf.concat([perm_mask_0, tf.ones([reuse_len, non_reuse_len])],
-                                axis=1)
-        perm_mask_1 = tf.concat([tf.zeros([non_reuse_len, reuse_len]), perm_mask_1],
-                                axis=1)
-        perm_mask = tf.concat([perm_mask_0, perm_mask_1], axis=0)
-        target = tf.concat([target_0, target_1], axis=0)
-        target_mask = tf.concat([target_mask_0, target_mask_1], axis=0)
-        input_k = tf.concat([input_k_0, input_k_1], axis=0)
-        input_q = tf.concat([input_q_0, input_q_1], axis=0)
-
-        if num_predict is not None:
-            indices = tf.range(seq_len, dtype=tf.int64)
-            bool_target_mask = tf.cast(target_mask, tf.bool)
-            indices = tf.boolean_mask(indices, bool_target_mask)
-
-            ##### extra padding due to CLS/SEP introduced after prepro
-            actual_num_predict = tf.shape(indices)[0]
-            # actual_num_predict = indices.shape[0]
-            pad_len = num_predict - actual_num_predict
-
-            ##### target_mapping
-            target_mapping = tf.one_hot(indices, seq_len, dtype=tf.float32)
-            paddings = tf.zeros([pad_len, seq_len], dtype=target_mapping.dtype)
-            target_mapping = tf.concat([target_mapping, paddings], axis=0)
-            example["target_mapping"] = tf.reshape(target_mapping,
-                                                   [num_predict, seq_len])
-
-            ##### target
-            target = tf.boolean_mask(target, bool_target_mask)
-            paddings = tf.zeros([pad_len], dtype=target.dtype)
-            target = tf.concat([target, paddings], axis=0)
-            example["target"] = tf.reshape(target, [num_predict])
-
-            ##### target mask
-            target_mask = tf.concat(
-                [tf.ones([actual_num_predict], dtype=tf.float32),
-                 tf.zeros([pad_len], dtype=tf.float32)],
-                axis=0)
-            example["target_mask"] = tf.reshape(target_mask, [num_predict])
-        else:
-            example["target"] = tf.reshape(target, [seq_len])
-            example["target_mask"] = tf.reshape(target_mask, [seq_len])
-
-        # reshape back to fixed shape
-        example["perm_mask"] = tf.reshape(perm_mask, [seq_len, seq_len])
-        example["input_k"] = tf.reshape(input_k, [seq_len])
-        example["input_q"] = tf.reshape(input_q, [seq_len])
-
-        _convert_example(example, use_bfloat16)
-
-        for k, v in example.items():
-            tf.logging.info("%s: %s", k, v)
-        return example
+  _predicts_hid, new_mems_i,_predicts = single_core_graph(
+      mode="infer",
+      features=examples[0],
+      mems=mems_i)
+  tower_mems.append(mems_i)
+  tower_new_mems.append(new_mems_i)
 
 
-def get_model_fn():
-  def model_fn(features, labels, mode, params):
-      is_training = (mode == tf.estimator.ModeKeys.TRAIN)
+  ## average losses and gradients across towers
+  # if len(tower_losses) > 1:
+  #   loss = tf.add_n(tower_losses) / len(tower_losses)
+  #   grads_and_vars = average_grads_and_vars(tower_grads_and_vars)
+  # else:
+  #   loss = tower_losses[0]
+  #   grads_and_vars = tower_grads_and_vars[0]
+  #
+  # ## get train op
+  # train_op, learning_rate, gnorm = model_utils.get_train_op(FLAGS, None,
+  #     grads_and_vars=grads_and_vars)
+  # global_step = tf.train.get_global_step()
+
+  ##### Training loop
+  # initialize mems
+  tower_mems_np = []
+  for i in range(FLAGS.num_core_per_host):
+    mems_i_np = {}
+    for key in tower_mems[i].keys():
+      mems_i_np[key] = initialize_mems_np(bsz_per_core)
+    tower_mems_np.append(mems_i_np)
+
+  gpu_options = tf.GPUOptions(allow_growth=True)
+
+  model_utils.init_from_checkpoint(FLAGS, global_vars=True)
+
+  all_predictions = []
+  all_inputs = []
+
+  with tf.Session(config=tf.ConfigProto(allow_soft_placement=True,
+      gpu_options=gpu_options)) as sess:
+    sess.run(tf.global_variables_initializer())
+
+    fetches = [_predicts, tower_new_mems, examples[0]]
+
+    # if not FLAGS.init_checkpoint:
+    #     total_loss, prev_step = 0., -1
+    # else:
+    #     total_loss, prev_step = 0., sess.run(global_step,{})
+    #     FLAGS.train_steps += prev_step + FLAGS.train_steps
+
+    cnt =0
+    while True:
+      feed_dict = {}
+      for key in tower_mems_np[0].keys():
+        for m, m_np in zip(tower_mems[i][key], tower_mems_np[0][key]):
+          feed_dict[m] = m_np
+
+      fetched = sess.run(fetches, feed_dict=feed_dict)
+      # loss_np, tower_mems_np, curr_step = fetched[:3]
+      # total_loss += loss_np
+      predict = fetched[0]
+      tower_mems_np = fetched[1]
+      input_data = fetched[2]
+
+      all_predictions.append(predict)
+      all_inputs.append(input_data)
+
+      cnt+=1
+      if cnt==1:
+          import ipdb;ipdb.set_trace()
+
+      if cnt >=int(9346/FLAGS.train_batch_size):
+        import ipdb;ipdb.set_trace()
+      print("??")
 
 
+def main(unused_argv):
+  del unused_argv  # Unused
 
-      if mode == tf.estimator.ModeKeys.PREDICT:
-          # prediction dataset
-          bsz_per_core = FLAGS.train_batch_size // FLAGS.num_core_per_host
-          mems = {}
-          if FLAGS.mem_len:
-              mems['mems'] = create_mems_tf(bsz_per_core)
-          output = function_builder.get_loss(FLAGS, features,labels,mems, is_training)
-          predictions = {
-              "outputs": output
-          }
-          #### load pretrained models
-          scaffold_fn = model_utils.init_from_checkpoint(FLAGS)
+  tf.logging.set_verbosity(tf.logging.INFO)
 
-          output_spec = tf.estimator.EstimatorSpec(mode=mode,predictions=predictions)
-          return output_spec
-      if mode == tf.estimator.ModeKeys.TRAIN:
-          # train dataset
-          pass
+  # Get corpus info
+  FLAGS.n_token = data_utils.VOCAB_SIZE
+  tf.logging.info("n_token {}".format(FLAGS.n_token))
+
+  if not tf.gfile.Exists(FLAGS.model_dir):
+    tf.gfile.MakeDirs(FLAGS.model_dir)
+
+  predict("/gpu:0")
 
 
-
-def main(_):
-    tf.logging.set_verbosity(tf.logging.INFO)
-
-    if not tf.gfile.Exists(FLAGS.output_dir):
-        tf.gfile.MakeDirs(FLAGS.output_dir)
-
-    train_input_fn, record_info_dict = data_utils.get_input_fn(
-        tfrecord_dir=FLAGS.record_info_dir,
-        split="train",
-        bsz_per_host=FLAGS.train_batch_size,
-        seq_len=FLAGS.seq_len,
-        reuse_len=FLAGS.reuse_len,
-        bi_data=FLAGS.bi_data,
-        num_hosts=1,
-        num_core_per_host=1,  # set to one no matter how many GPUs
-        perm_size=FLAGS.perm_size,
-        mask_alpha=FLAGS.mask_alpha,
-        mask_beta=FLAGS.mask_beta,
-        uncased=FLAGS.uncased,
-        num_passes=FLAGS.num_passes,
-        use_bfloat16=FLAGS.use_bfloat16,
-        num_predict=FLAGS.num_predict)
-
-    tf.logging.info("num of batches {}".format(record_info_dict["num_batch"]))
-
-    bsz_per_core = FLAGS.train_batch_size // FLAGS.num_core_per_host
-    params = {
-        "batch_size": FLAGS.train_batch_size  # the whole batch
-    }
-    train_set = train_input_fn(params)
-    example = train_set.make_one_shot_iterator().get_next()
-    import ipdb;ipdb.set_trace()
-    run_config = model_utils.configure_tpu(FLAGS)
-    model_fn = get_model_fn()
-    estimator = tf.estimator.Estimator(
-        model_fn=model_fn,
-        config=run_config)
-
-    all_preds = []
-
-    gpu_options = tf.GPUOptions(allow_growth=True)
-    for result in estimator.predict(input_fn=train_input_fn,yield_single_examples=True):
-        all_preds.append(result)
+if __name__ == "__main__":
+  tf.app.run()

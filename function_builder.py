@@ -44,7 +44,7 @@ def construct_scalar_host_call(
   return host_call_fn, [global_step_tensor] + other_tensors
 
 
-def two_stream_loss(FLAGS, features, labels, mems, is_training):
+def two_stream_loss(FLAGS, features, labels, mems, is_training,mode=None):
   """Pretraining loss with two-stream attention Transformer-XL."""
 
   #### Unpack input
@@ -90,14 +90,13 @@ def two_stream_loss(FLAGS, features, labels, mems, is_training):
       inp_q=inp_q)
 
   output = xlnet_model.get_sequence_output()
-  if not is_training:
-      return output
   new_mems = {mem_name: xlnet_model.get_new_memory()}
   lookup_table = xlnet_model.get_embedding_table()
 
   initializer = xlnet_model.get_initializer()
 
   with tf.variable_scope("model", reuse=tf.AUTO_REUSE):
+
     # LM loss
     lm_loss = modeling.lm_loss(
         hidden=output,
@@ -109,7 +108,17 @@ def two_stream_loss(FLAGS, features, labels, mems, is_training):
         tie_weight=True,
         bi_data=run_config.bi_data,
         use_tpu=run_config.use_tpu)
-
+    # LM logits
+    lm_logits = modeling.lm_pred(
+        hidden=output,
+        target=tgt,
+        n_token=xlnet_config.n_token,
+        d_model=xlnet_config.d_model,
+        initializer=initializer,
+        lookup_table=lookup_table,
+        tie_weight=True,
+        bi_data=run_config.bi_data,
+        use_tpu=run_config.use_tpu)
   #### Quantity to monitor
   monitor_dict = {}
 
@@ -120,16 +129,21 @@ def two_stream_loss(FLAGS, features, labels, mems, is_training):
   total_loss = tf.reduce_sum(lm_loss * tgt_mask) / tf.reduce_sum(tgt_mask)
   monitor_dict["total_loss"] = total_loss
 
+  if not is_training:
+      if mode==tf.estimator.ModeKeys.PREDICT:
+        return output, new_mems, lm_logits
+      else:
+          print("eval model fn")
   return total_loss, new_mems, monitor_dict
 
 
-def get_loss(FLAGS, features, labels, mems, is_training):
+def get_loss(FLAGS, features, labels, mems, is_training,mode=None):
   """Pretraining loss with two-stream attention Transformer-XL."""
   if FLAGS.use_bfloat16:
     with tf.tpu.bfloat16_scope():
-      return two_stream_loss(FLAGS, features, labels, mems, is_training)
+      return two_stream_loss(FLAGS, features, labels, mems, is_training,mode=mode)
   else:
-    return two_stream_loss(FLAGS, features, labels, mems, is_training)
+    return two_stream_loss(FLAGS, features, labels, mems, is_training,mode=mode)
 
 
 def get_classification_loss(

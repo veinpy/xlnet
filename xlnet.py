@@ -265,6 +265,9 @@ class XLNetModel(object):
 
     return self.output
 
+  def get_lm_logits(self):
+      return
+
   def get_new_memory(self):
     """
     Returns:

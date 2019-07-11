@@ -284,6 +284,7 @@ def train(ps_device):
         total_loss, prev_step = 0., -1
     else:
         total_loss, prev_step = 0., sess.run(global_step,{})
+        FLAGS.train_steps += prev_step + FLAGS.train_steps
 
     while True:
       feed_dict = {}
@@ -291,6 +292,7 @@ def train(ps_device):
         for key in tower_mems_np[i].keys():
           for m, m_np in zip(tower_mems[i][key], tower_mems_np[i][key]):
             feed_dict[m] = m_np
+
 
       fetched = sess.run(fetches, feed_dict=feed_dict)
       loss_np, tower_mems_np, curr_step = fetched[:3]

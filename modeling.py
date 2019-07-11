@@ -691,6 +691,24 @@ def lm_loss(hidden, target, n_token, d_model, initializer, lookup_table=None,
     return loss
 
 
+def lm_pred(hidden, target, n_token, d_model, initializer, lookup_table=None,
+            tie_weight=False, bi_data=True, use_tpu=False):
+    with tf.variable_scope('lm_loss',reuse=True):
+        if tie_weight:
+            assert lookup_table is not None, \
+                'lookup_table cannot be None for tie_weight'
+            softmax_w = lookup_table
+        else:
+            softmax_w = tf.get_variable('weight', [n_token, d_model],
+                                        dtype=hidden.dtype, initializer=initializer)
+
+        softmax_b = tf.get_variable('bias', [n_token], dtype=hidden.dtype,
+                                    initializer=tf.zeros_initializer())
+
+        logits = tf.einsum('ibd,nd->ibn', hidden, softmax_w) + softmax_b
+
+        return logits
+
 def summarize_sequence(summary_type, hidden, d_model, n_head, d_head, dropout,
                        dropatt, input_mask, is_training, initializer,
                        scope=None, reuse=None, use_proj=True):
