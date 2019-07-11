@@ -855,8 +855,12 @@ def get_input_fn(
                   len(record_info["filenames"]))
   tf.logging.info(record_info["filenames"])
 
-  def input_fn(params):
+  def input_fn(params=None):
     """docs."""
+    if not params:
+        params={}
+        batch_size = FLAGS.train_batch_size
+        params['batch_size'] = batch_size
     assert params["batch_size"] * num_core_per_host == bsz_per_host
 
     dataset = get_dataset(
