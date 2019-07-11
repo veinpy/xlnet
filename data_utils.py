@@ -576,9 +576,9 @@ def parse_files_to_dataset(parser, file_names, split, num_batch, num_hosts,
   # So, change to cache non-parsed raw data instead.
 
   # dataset = dataset.shuffle(buffer_size=num_core_per_host * bsz_per_core*2).repeat().map(parser)#.cache()
-  dataset = dataset.cache().map(parser).repeat()
+  dataset = dataset.shuffle(buffer_size=num_core_per_host * bsz_per_core*2).map(parser).repeat()
   dataset = dataset.batch(bsz_per_core, drop_remainder=True)
-  dataset = dataset.prefetch(1)# num_core_per_host * bsz_per_core)
+  dataset = dataset.prefetch(1)#.repeat().cache()# num_core_per_host * bsz_per_core)
 
   return dataset
 

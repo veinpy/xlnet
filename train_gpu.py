@@ -280,7 +280,11 @@ def train(ps_device):
 
     fetches = [loss, tower_new_mems, global_step, gnorm, learning_rate, train_op]
 
-    total_loss, prev_step = 0., -1
+    if not FLAGS.init_checkpoint:
+        total_loss, prev_step = 0., -1
+    else:
+        total_loss, prev_step = 0., sess.run(global_step,{})
+
     while True:
       feed_dict = {}
       for i in range(FLAGS.num_core_per_host):

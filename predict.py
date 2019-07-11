@@ -137,6 +137,115 @@ def create_mems_tf(bsz_per_core):
   return mems
 
 
+def _convert_example(example, use_bfloat16):
+  """Cast int64 into int32 and float32 to bfloat16 if use_bfloat16."""
+  for key in list(example.keys()):
+    val = example[key]
+    if tf.keras.backend.is_sparse(val):
+      val = tf.sparse.to_dense(val)
+    if val.dtype == tf.int64:
+      val = tf.cast(val, tf.int32)
+    if use_bfloat16 and val.dtype == tf.float32:
+      val = tf.cast(val, tf.bfloat16)
+
+    example[key] = val
+
+def input_fn_builder(tfrecord_dir, is_triaining):
+
+
+
+    def parser(record):
+        """function used to parse tfrecord."""
+
+        record_spec = {
+            "input": tf.FixedLenFeature([seq_len], tf.int64),
+            "target": tf.FixedLenFeature([seq_len], tf.int64),
+            "seg_id": tf.FixedLenFeature([seq_len], tf.int64),
+            "label": tf.FixedLenFeature([1], tf.int64),
+            "is_masked": tf.FixedLenFeature([seq_len], tf.int64),
+        }
+
+        # retrieve serialized example
+        example = tf.parse_single_example(
+            serialized=record,
+            features=record_spec)
+
+        inputs = example.pop("input")
+        target = example.pop("target")
+        is_masked = tf.cast(example.pop("is_masked"), tf.bool)
+
+        non_reuse_len = seq_len - reuse_len
+        assert perm_size <= reuse_len and perm_size <= non_reuse_len
+
+        perm_mask_0, target_0, target_mask_0, input_k_0, input_q_0 = _local_perm(
+            inputs[:reuse_len],
+            target[:reuse_len],
+            is_masked[:reuse_len],
+            perm_size,
+            reuse_len)
+
+        perm_mask_1, target_1, target_mask_1, input_k_1, input_q_1 = _local_perm(
+            inputs[reuse_len:],
+            target[reuse_len:],
+            is_masked[reuse_len:],
+            perm_size,
+            non_reuse_len)
+
+        perm_mask_0 = tf.concat([perm_mask_0, tf.ones([reuse_len, non_reuse_len])],
+                                axis=1)
+        perm_mask_1 = tf.concat([tf.zeros([non_reuse_len, reuse_len]), perm_mask_1],
+                                axis=1)
+        perm_mask = tf.concat([perm_mask_0, perm_mask_1], axis=0)
+        target = tf.concat([target_0, target_1], axis=0)
+        target_mask = tf.concat([target_mask_0, target_mask_1], axis=0)
+        input_k = tf.concat([input_k_0, input_k_1], axis=0)
+        input_q = tf.concat([input_q_0, input_q_1], axis=0)
+
+        if num_predict is not None:
+            indices = tf.range(seq_len, dtype=tf.int64)
+            bool_target_mask = tf.cast(target_mask, tf.bool)
+            indices = tf.boolean_mask(indices, bool_target_mask)
+
+            ##### extra padding due to CLS/SEP introduced after prepro
+            actual_num_predict = tf.shape(indices)[0]
+            # actual_num_predict = indices.shape[0]
+            pad_len = num_predict - actual_num_predict
+
+            ##### target_mapping
+            target_mapping = tf.one_hot(indices, seq_len, dtype=tf.float32)
+            paddings = tf.zeros([pad_len, seq_len], dtype=target_mapping.dtype)
+            target_mapping = tf.concat([target_mapping, paddings], axis=0)
+            example["target_mapping"] = tf.reshape(target_mapping,
+                                                   [num_predict, seq_len])
+
+            ##### target
+            target = tf.boolean_mask(target, bool_target_mask)
+            paddings = tf.zeros([pad_len], dtype=target.dtype)
+            target = tf.concat([target, paddings], axis=0)
+            example["target"] = tf.reshape(target, [num_predict])
+
+            ##### target mask
+            target_mask = tf.concat(
+                [tf.ones([actual_num_predict], dtype=tf.float32),
+                 tf.zeros([pad_len], dtype=tf.float32)],
+                axis=0)
+            example["target_mask"] = tf.reshape(target_mask, [num_predict])
+        else:
+            example["target"] = tf.reshape(target, [seq_len])
+            example["target_mask"] = tf.reshape(target_mask, [seq_len])
+
+        # reshape back to fixed shape
+        example["perm_mask"] = tf.reshape(perm_mask, [seq_len, seq_len])
+        example["input_k"] = tf.reshape(input_k, [seq_len])
+        example["input_q"] = tf.reshape(input_q, [seq_len])
+
+        _convert_example(example, use_bfloat16)
+
+        for k, v in example.items():
+            tf.logging.info("%s: %s", k, v)
+        return example
+
+
 def get_model_fn():
   def model_fn(features, labels, mode, params):
       is_training = (mode == tf.estimator.ModeKeys.TRAIN)
@@ -161,6 +270,8 @@ def get_model_fn():
       if mode == tf.estimator.ModeKeys.TRAIN:
           # train dataset
           pass
+
+
 
 def main(_):
     tf.logging.set_verbosity(tf.logging.INFO)
@@ -193,7 +304,7 @@ def main(_):
     }
     train_set = train_input_fn(params)
     example = train_set.make_one_shot_iterator().get_next()
-
+    import ipdb;ipdb.set_trace()
     run_config = model_utils.configure_tpu(FLAGS)
     model_fn = get_model_fn()
     estimator = tf.estimator.Estimator(
