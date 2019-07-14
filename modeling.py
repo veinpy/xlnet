@@ -706,6 +706,7 @@ def lm_pred(hidden, target, n_token, d_model, initializer, lookup_table=None,
                                     initializer=tf.zeros_initializer())
 
         logits = tf.einsum('ibd,nd->ibn', hidden, softmax_w) + softmax_b
+        print ("logits's shape: {}".format(logits.shape))
 
         return logits
 

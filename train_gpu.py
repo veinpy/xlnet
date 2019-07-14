@@ -321,7 +321,8 @@ def main(unused_argv):
   tf.logging.set_verbosity(tf.logging.INFO)
 
   # Get corpus info
-  FLAGS.n_token = data_utils.VOCAB_SIZE
+  if not FLAGS.n_token:
+    FLAGS.n_token = data_utils.VOCAB_SIZE
   tf.logging.info("n_token {}".format(FLAGS.n_token))
 
   if not tf.gfile.Exists(FLAGS.model_dir):

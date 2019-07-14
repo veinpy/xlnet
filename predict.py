@@ -19,8 +19,7 @@ import model_utils
 from gpu_utils import assign_to_gpu, average_grads_and_vars
 import function_builder
 import sentencepiece as spm
-sp = spm.SentencePieceProcessor()
-sp.Load("xlData/sellpoint/m_corpus_v2.model")
+
 
 # GPU config
 flags.DEFINE_integer("num_hosts", default=1,
@@ -74,6 +73,8 @@ flags.DEFINE_integer("save_steps", default=None,
       help="number of steps for model checkpointing.")
 
 # Data config
+flags.DEFINE_string("sp_path", default=None,
+      help="sentencepiece model path.")
 flags.DEFINE_integer('seq_len', default=0,
       help='Sequence length for pretraining.')
 flags.DEFINE_integer('reuse_len', default=0,
@@ -91,7 +92,7 @@ flags.DEFINE_integer('perm_size', default=None,
   help='perm size.')
 flags.DEFINE_bool("uncased", False,
       help="Use uncased inputs or not.")
-flags.DEFINE_integer("n_token", 32000, help="Vocab size")
+flags.DEFINE_integer("n_token", None, help="Vocab size")
 
 # Model config
 flags.DEFINE_integer("mem_len", default=0,
@@ -137,13 +138,22 @@ flags.DEFINE_float("init_range", default=0.1,
 
 
 FLAGS = flags.FLAGS
+sp = spm.SentencePieceProcessor()
+if FLAGS.sp_path:
+    sp.Load(FLAGS.sp_path)
+else:
+    sp=None
 
-
-def visualize_infer_result():
+def visualize_infer_result(one_batch_predict_logits, sp):
     """
     visualize one batch of infer result
     :return:
     """
+    all_text = []
+    for sent in one_batch_predict_logits:
+        text = [sp.IdToPiece(int(i)) for i in sent]
+        all_text.append(''.join(text))
+    return all_text
 
 
 
@@ -325,7 +335,8 @@ def main(unused_argv):
   tf.logging.set_verbosity(tf.logging.INFO)
 
   # Get corpus info
-  FLAGS.n_token = data_utils.VOCAB_SIZE
+  if not FLAGS.n_token:
+    FLAGS.n_token = data_utils.VOCAB_SIZE
   tf.logging.info("n_token {}".format(FLAGS.n_token))
 
   if not tf.gfile.Exists(FLAGS.model_dir):

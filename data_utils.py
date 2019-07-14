@@ -172,6 +172,10 @@ def _create_data(idx, input_paths):
 
 
 def create_data(_):
+  if FLAGS.n_token:
+    VOCAB_SIZE = FLAGS.n_token
+  else:
+    VOCAB_SIZE = 32000
   # Validate FLAGS
   assert FLAGS.bsz_per_host % FLAGS.num_core_per_host == 0
   if not FLAGS.use_tpu:
@@ -921,6 +925,7 @@ if __name__ == "__main__":
   flags.DEFINE_integer("num_task", 1, help="Number of total tasks.")
   flags.DEFINE_integer("task", 0, help="The Task ID. This value is used when "
                        "using multiple workers to identify each worker.")
+  flags.DEFINE_integer("n_token", None, help="Vocab size")
 
   tf.logging.set_verbosity(tf.logging.INFO)
   tf.app.run(create_data)
